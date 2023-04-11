@@ -1,38 +1,75 @@
-image: maven:4.0.0
-
+workflow:
+ rules:
+  - if: $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event"
+    when:  never
+  - when: always
+  
 variables:
- MAVEN_CLI_OPTS: "-s .m2/settings.xml --batch-mode"
- MAVEN_OPTS: "-Dmaven.repo.local*.m2/repository"
-
-cache:
- paths:
-  - .m2/repository/
-  - target/
-
-
-
+ TF_DIR: ${CI_PROJECT_DIR}/terraform
+ STATE_NAME: "clodquicklabs-tf"
+ ADDRESS: "https://gitlab.com/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${STATE_NAME}"
+ 
 stages:
- - test
- - build
- - deploy
+ - validate
+ - plan
+ - apply
+ - destroy
+ 
+image:
+ name: hashicorp/terraform:light
+ entrypoint: [""]
  
 before_script:
- - chmod +x mvnw
-
-test:
- stage: test
- script: ./mvnw test
+ - terraform --version
+ - export GITLAB_ACCESS_TOKEN = $TOKEN
+ - cd ${TF_DIR}
+ - terraform init -reconfigure -backend-config="address=${ADDRESS}" -backend-config="lock_address=${ADDRESS}/lock" -backend-config="unlock_address=${ADDRESS}/unlock" -backend-config="username=Leandro Moreira Lopes" -backend-config="password=$GITLAB_ACCESS_TOKEN" -backend-config="lock_method=POST" -backend-config="unlock_method=DELETE" -backend-config="retry_wait_min=5" 
  
-build:
- stage: build
- script: ./mvnw package -DskipTests
- artifacts:
-  paths:
-   - target/gitlab-pipeline.jar
-
-production:
- stage: deploy
+validate:
+ stage: validate
  script:
-  - echo "Deploy arquivo!"
- only:
-  - main
+  - terraform validate
+ cache:
+  key: ${CI_COMMIT_REF_NAME}
+  paths:
+  - ${TF_DIR}/.terraform
+  policy: pull-push
+  
+plan:
+ stage: plan
+ script:
+  - terraform plan
+ dependencies:
+  - validate
+ cache:
+  key: ${CI_COMMIT_REF_NAME}
+  paths:
+  - ${TF_DIR}/.terraform
+  policy: pull
+  
+apply:
+ stage: apply
+ script:
+  - terraform apply -auto-approve
+ dependencies:
+  - plan
+ cache:
+  key: ${CI_COMMIT_REF_NAME}
+  paths:
+  - ${TF_DIR}/.terraform
+  policy: pull
+  
+destroy:
+ stage: destroy
+ script:
+  - terraform destroy -auto-approve
+ dependencies:
+  - plan
+  - apply
+ cache:
+  key: ${CI_COMMIT_REF_NAME}
+  paths:
+  - ${TF_DIR}/.terraform
+  policy: pull
+ when: manual
+   
